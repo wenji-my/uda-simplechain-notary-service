@@ -32,7 +32,7 @@ app.get('/block/:height', async (req, res) => {
  */
 app.post('/block', async (req, res) => {
   const body = { address, star } = req.body
-  const { dec, ra, story} = star
+  console.log(body)
   if (!address || !star) {
     res.status(700).json({
       status: 700,
@@ -40,6 +40,7 @@ app.post('/block', async (req, res) => {
     })
     return;
   }
+  const { dec, ra, story} = star
   if (typeof dec !== 'string' || typeof ra !== 'string' || typeof story !== 'string' || !dec.length || !ra.length || !story.length) {
     res.status(700).json({
       status: 700,
@@ -54,6 +55,14 @@ app.post('/block', async (req, res) => {
     })
     return;
   }
+  const isASCII = ((str) => /^[\x00-\x7F]*$/.test(str))
+  if (!isASCII(story)) {
+    res.status(700).json({
+      status: 700,
+      desc: "Your star story contains non-ASCII symbols"
+    })
+    return;
+  }
   let validate;
   try {
     validate = await StarValidation.getValidate(address)
@@ -65,8 +74,7 @@ app.post('/block', async (req, res) => {
     return;
   }
   validate = JSON.parse(validate);
-  let isValid = validate.isValid
-  if (!isValid) {
+  if (validate.messageSignature !== 'valid') {
     res.status(700).json({
       status: 700,
       desc: "Signature is not valid"
@@ -74,13 +82,6 @@ app.post('/block', async (req, res) => {
     return;
   }
 
-  body.star = {
-    dec: star.dec,
-    ra: star.ra,
-    story: new Buffer(story).toString('hex'),
-    mag: star.mag ? star.mag : '',
-    con: star.con ? star.con : ''
-  }
   await myBlockChain.addBlock(new Block(body));
   const height = await myBlockChain.getBlockHeight();
   const block = await myBlockChain.getBlock(height);
@@ -109,8 +110,19 @@ app.post('/requestValidation',async (req, res) => {
     message: message,
     validationWindow: validationWindow
   };
-  StarValidation.addRequestValidation(address, JSON.stringify(data));
-  res.json(data)
+  try {
+    let validate = await StarValidation.getValidate(address);
+    validate = JSON.parse(validate);
+    const isExpired = Date.now() - validate.requestTimeStamp > validate.validationWindow * 1000;
+    if (isExpired) {
+      StarValidation.addRequestValidation(address, JSON.stringify(data));
+    } else {
+      data.validationWindow = Math.floor((validate.validationWindow * 1000 - (Date.now() - validate.requestTimeStamp)) / 1000);
+    }
+  } catch (error) {
+    StarValidation.addRequestValidation(address, JSON.stringify(data));
+  }
+  res.json(data);
 })
 
 /**
@@ -126,30 +138,37 @@ app.post('/message-signature/validate', async (req, res) => {
   }
 
   const { address, signature } = req.body;
+  let registerStar, status;
   try {
     let validate = await StarValidation.getValidate(address);
     validate = JSON.parse(validate);
-    validate.isValid = false
     
-    const isExpired = Date.now() - validate.requestTimeStamp > validate.validationWindow * 1000
-    if (validate.isValid) {
-      res.json(validate)
+    if (validate.messageSignature === 'valid') {
+      res.json({
+        registerStar: true,
+        status: validate
+      })
       return;
     }
+    const isExpired = Date.now() - validate.requestTimeStamp > validate.validationWindow * 1000;
     if (isExpired) {
-      validate.isValid = false
-      validate.desc = 'Validation window was expired'
+      registerStar = false;
+      validate.messageSignature = 'invalid';
     } else {
-      validate.validationWindow = Math.floor((validate.validationWindow * 1000 - (Date.now() - validate.requestTimeStamp)) / 1000)
+      validate.validationWindow = Math.floor((validate.validationWindow * 1000 - (Date.now() - validate.requestTimeStamp)) / 1000);
       try {
-        validate.isValid = bitcoinMessage.verify(validate.message, address, signature)
+        registerStar = bitcoinMessage.verify(validate.message, address, signature);
       } catch (error) {
         console.log(error)
+        registerStar = false;
       }
-      validate.desc = validate.isValid ? 'Signature success' : 'Signature failure'
+      validate.messageSignature = registerStar ? 'valid' : 'invalid'
     }
     StarValidation.addRequestValidation(address,JSON.stringify(validate))
-    res.json(validate)
+    res.json({
+      registerStar: registerStar,
+      status: validate
+    })
   } catch (error) {
     res.status(701).json({
       status: 701,

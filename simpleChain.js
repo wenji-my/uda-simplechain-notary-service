@@ -165,7 +165,6 @@ class Blockchain{
         let height = -1;
         db.createReadStream().on('data', function(data) {
             height++;
-            console.log(height,data)
             }).on('error', function(err) {
               reject(err)
             }).on('close', function() {
