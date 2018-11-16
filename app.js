@@ -18,6 +18,7 @@ app.use(bodyParser.urlencoded({ extended: true })); // for parsing application/x
 app.get('/block/:height', async (req, res) => {
   let block = await myBlockChain.getBlock(req.params.height)
   if (block) {
+    block.body.star.storyDecoded = new Buffer(block.body.star.story, 'hex').toString()
     res.json(block);
   } else {
     res.status(700).json({
@@ -32,7 +33,6 @@ app.get('/block/:height', async (req, res) => {
  */
 app.post('/block', async (req, res) => {
   const body = { address, star } = req.body
-  console.log(body)
   if (!address || !star) {
     res.status(700).json({
       status: 700,
@@ -81,7 +81,8 @@ app.post('/block', async (req, res) => {
     })
     return;
   }
-
+  
+  body.star.story = new Buffer(story).toString('hex')
   await myBlockChain.addBlock(new Block(body));
   const height = await myBlockChain.getBlockHeight();
   const block = await myBlockChain.getBlock(height);
@@ -117,6 +118,8 @@ app.post('/requestValidation',async (req, res) => {
     if (isExpired) {
       StarValidation.addRequestValidation(address, JSON.stringify(data));
     } else {
+      data.message = validate.message
+      data.requestTimeStamp = validate.requestTimeStamp
       data.validationWindow = Math.floor((validate.validationWindow * 1000 - (Date.now() - validate.requestTimeStamp)) / 1000);
     }
   } catch (error) {
